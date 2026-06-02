@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Configuration
 # ============================================================
-BITCOIN_RPC_URL = "http://192.168.2.65:8332"
+BITCOIN_RPC_URL = "http://192.168.2.241:8332"
 BITCOIN_RPC_USER = "bitcoin"
 BITCOIN_RPC_PASSWORD = "passw0rd"
 
@@ -170,6 +170,7 @@ def transform_vin(vin_item: dict) -> dict:
             "asm": script_sig.get("asm"),
             "hex": script_sig.get("hex"),
         },
+        "txinwitness": vin_item.get("txinwitness", []),
         "prevout": {
             "generated": prevout.get("generated"),
             "height": prevout.get("height"),
@@ -229,6 +230,7 @@ def transform_block(block: dict) -> dict:
         "mediantime": block["mediantime"],
         "nonce": block["nonce"],
         "bits": block["bits"],
+        "target": block.get("target", ""),
         "difficulty": block["difficulty"],
         "chainwork": block["chainwork"],
         "nTx": block["nTx"],

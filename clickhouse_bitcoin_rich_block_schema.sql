@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS bitcoin.blocks
     `mediantime` UInt64,
     `nonce` UInt64,
     `bits` String,
+    `target` String,
     `difficulty` Float64,
     `chainwork` String,
     `nTx` UInt64,
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS bitcoin.blocks
                 asm Nullable(String),
                 hex Nullable(String)
             ),
+            txinwitness Array(String),
             prevout Tuple(
                 generated Nullable(Bool),
                 height Nullable(UInt64),
@@ -132,6 +134,7 @@ CREATE TABLE IF NOT EXISTS bitcoin.transactions
             asm Nullable(String),
             hex Nullable(String)
         ),
+        txinwitness Array(String),
         prevout Tuple(
             generated Nullable(Bool),
             height Nullable(UInt64),
@@ -200,6 +203,7 @@ CREATE TABLE IF NOT EXISTS bitcoin.inputs
     `vin_vout` Nullable(UInt32),
     `scriptSig_asm` Nullable(String),
     `scriptSig_hex` Nullable(String),
+    `txinwitness` Array(String),
     `sequence` UInt64,
 
     -- prevout source attributes
@@ -366,6 +370,7 @@ SELECT
     vin_item.vout AS vin_vout,
     vin_item.scriptSig.asm AS scriptSig_asm,
     vin_item.scriptSig.hex AS scriptSig_hex,
+    vin_item.txinwitness AS txinwitness,
     vin_item.sequence AS sequence,
 
     vin_item.prevout.generated AS prevout_generated,
