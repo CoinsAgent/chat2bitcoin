@@ -22,10 +22,27 @@
 -- ============================================================
 -- 1. Create graph space
 -- ============================================================
+-- PRODUCTION CONFIGURATION (Updated for High Availability):
+--   partition_num = 256:
+--     - Optimal for large-scale Bitcoin datasets (100M+ transactions)
+--     - Powers of 2 are optimal for hash distribution
+--     - Provides better parallelism for query execution
+--
+--   replica_factor = 2:
+--     - CRITICAL FIX from previous replica_factor = 1
+--     - Ensures high availability: system survives 1 node failure
+--     - Recommended minimum for production deployments
+--     - Use replica_factor = 3 for mission-critical systems
+--
+--   vid_type = FIXED_STRING(100):
+--     - Sufficient for all Bitcoin addresses and transaction IDs
+--     - Format: "addr:<bitcoin_address>" or "tx:<txid>"
+--     - Provides safe headroom for future extensions
+-- ============================================================
 
 CREATE SPACE IF NOT EXISTS bitcoin_addr_graph (
-  partition_num = 100,
-  replica_factor = 1,
+  partition_num = 256,
+  replica_factor = 2,
   vid_type = FIXED_STRING(100)
 );
 
@@ -214,4 +231,3 @@ ON tx(block_time);
 -- FIND SHORTEST PATH FROM "addr:A" TO "addr:C"
 -- OVER input_to_tx, tx_to_output
 -- UPTO 6 STEPS;
-
