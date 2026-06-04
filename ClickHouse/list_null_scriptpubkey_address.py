@@ -17,7 +17,7 @@ import json
 import requests as req
 
 
-CLICKHOUSE_HTTP_URL = "http://localhost:8123"
+CLICKHOUSE_HTTP_URL = "http://192.168.2.241:8123"
 CLICKHOUSE_DATABASE = "bitcoin"
 CLICKHOUSE_USER = "default"
 CLICKHOUSE_PASSWORD = ""

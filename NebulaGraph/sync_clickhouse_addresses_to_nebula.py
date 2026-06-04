@@ -403,15 +403,37 @@ def build_where_clause(sync: SyncConfig) -> str:
     return " AND ".join(parts)
 
 
-def fetch_address_rows(ch, sync: SyncConfig, offset: int) -> List[Dict[str, Any]]:
+def fetch_block_heights(ch, sync: SyncConfig) -> List[int]:
+    final_suffix = " FINAL" if sync.use_final else ""
+
+    sql = f"""
+SELECT DISTINCT block_height
+FROM bitcoin.addresses{final_suffix}
+WHERE {build_where_clause(sync)}
+ORDER BY block_height
+"""
+
+    result = ch.query(sql)
+    heights = [int(row[0]) for row in result.result_rows]
+    if sync.offset_start > 0:
+        return heights[sync.offset_start :]
+    return heights
+
+
+def fetch_address_rows_for_block(
+    ch,
+    sync: SyncConfig,
+    block_height: int,
+    offset: int,
+    remaining_rows: Optional[int],
+) -> List[Dict[str, Any]]:
     final_suffix = " FINAL" if sync.use_final else ""
     limit = sync.fetch_limit
 
-    if sync.max_rows is not None:
-        remaining = sync.max_rows - (offset - sync.offset_start)
-        if remaining <= 0:
+    if remaining_rows is not None:
+        if remaining_rows <= 0:
             return []
-        limit = min(limit, remaining)
+        limit = min(limit, remaining_rows)
 
     sql = f"""
 SELECT
@@ -430,14 +452,36 @@ SELECT
     revision
 FROM bitcoin.addresses{final_suffix}
 WHERE {build_where_clause(sync)}
-ORDER BY block_height, txid, direction, source_index, address
+  AND block_height = {int(block_height)}
+ORDER BY txid, direction, source_index, address
 LIMIT {limit}
-OFFSET {offset}
+OFFSET {int(offset)}
 """
 
     result = ch.query(sql)
     columns = result.column_names
     return [dict(zip(columns, row)) for row in result.result_rows]
+
+
+def write_rows_to_nebula(session, rows: List[Dict[str, Any]], sync_cfg: SyncConfig) -> int:
+    batches = 0
+
+    for batch in chunked(rows, sync_cfg.insert_batch_size):
+        batch_rows = list(batch)
+
+        statements = [
+            build_address_vertices(batch_rows),
+            build_tx_vertices(batch_rows),
+            build_input_edges(batch_rows),
+            build_output_edges(batch_rows),
+        ]
+
+        for stmt in statements:
+            execute_ngql(session, stmt, dry_run=sync_cfg.dry_run)
+
+        batches += 1
+
+    return batches
 
 
 # -----------------------------
@@ -456,48 +500,66 @@ def sync_clickhouse_addresses_to_nebula(
     try:
         pool, session = open_nebula_session(nebula_cfg)
 
-        offset = sync_cfg.offset_start
+        block_heights = fetch_block_heights(ch, sync_cfg)
         total_rows = 0
         total_batches = 0
         started = time.time()
 
-        while True:
-            rows = fetch_address_rows(ch, sync_cfg, offset)
-            if not rows:
-                break
+        LOGGER.info("Found %s block heights to sync", len(block_heights))
 
-            LOGGER.info("Fetched %s rows from ClickHouse at offset=%s", len(rows), offset)
+        stop_requested = False
 
-            for batch in chunked(rows, sync_cfg.insert_batch_size):
-                batch_rows = list(batch)
+        for block_height in block_heights:
+            block_offset = 0
+            block_rows = 0
 
-                statements = [
-                    build_address_vertices(batch_rows),
-                    build_tx_vertices(batch_rows),
-                    build_input_edges(batch_rows),
-                    build_output_edges(batch_rows),
-                ]
+            while True:
+                remaining_rows = None
+                if sync_cfg.max_rows is not None:
+                    remaining_rows = sync_cfg.max_rows - total_rows
+                    if remaining_rows <= 0:
+                        LOGGER.info("Reached max_rows=%s", sync_cfg.max_rows)
+                        stop_requested = True
+                        break
 
-                for stmt in statements:
-                    execute_ngql(session, stmt, dry_run=sync_cfg.dry_run)
+                rows = fetch_address_rows_for_block(
+                    ch,
+                    sync_cfg,
+                    block_height,
+                    block_offset,
+                    remaining_rows,
+                )
+                if not rows:
+                    break
 
-                total_batches += 1
+                LOGGER.info(
+                    "Fetched %s rows from ClickHouse for block_height=%s offset=%s",
+                    len(rows),
+                    block_height,
+                    block_offset,
+                )
 
-            total_rows += len(rows)
-            offset += len(rows)
+                total_batches += write_rows_to_nebula(session, rows, sync_cfg)
+                total_rows += len(rows)
+                block_rows += len(rows)
+                block_offset += len(rows)
 
             elapsed = time.time() - started
             speed = total_rows / elapsed if elapsed > 0 else 0.0
             LOGGER.info(
-                "Progress: total_rows=%s total_batches=%s offset=%s speed=%.2f rows/sec",
+                "Block synced: block_height=%s block_rows=%s total_rows=%s total_batches=%s speed=%.2f rows/sec",
+                block_height,
+                block_rows,
                 total_rows,
                 total_batches,
-                offset,
                 speed,
             )
 
             if sync_cfg.sleep_seconds > 0:
                 time.sleep(sync_cfg.sleep_seconds)
+
+            if stop_requested:
+                break
 
         LOGGER.info("Sync finished. total_rows=%s total_batches=%s", total_rows, total_batches)
 
@@ -536,17 +598,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         description="Sync ClickHouse bitcoin.addresses to NebulaGraph Address -> Tx -> Address graph."
     )
 
-    parser.add_argument("--ch-host", default="127.0.0.1")
+    parser.add_argument("--ch-host", default="192.168.2.241")
     parser.add_argument("--ch-port", type=int, default=8123)
     parser.add_argument("--ch-user", default="default")
     parser.add_argument("--ch-password", default="")
     parser.add_argument("--ch-database", default="bitcoin")
     parser.add_argument("--ch-secure", action="store_true")
 
-    parser.add_argument("--nebula-hosts", default="127.0.0.1:9669", help="Comma-separated host:port list")
+    parser.add_argument("--nebula-hosts", default="192.168.2.65:9669", help="Comma-separated host:port list")
     parser.add_argument("--nebula-user", default="root")
     parser.add_argument("--nebula-password", default="nebula")
-    parser.add_argument("--nebula-space", default="bitcoin_addr_graph")
+    parser.add_argument("--nebula-space", default="bitcoin")
     parser.add_argument("--nebula-timeout-ms", type=int, default=60000)
 
     parser.add_argument("--address-month", type=int, default=None, help="Optional partition filter, e.g. 202506")
@@ -555,7 +617,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--fetch-limit", type=int, default=10000)
     parser.add_argument("--insert-batch-size", type=int, default=500)
-    parser.add_argument("--offset-start", type=int, default=0)
+    parser.add_argument("--offset-start", type=int, default=0, help="Skip this many block heights before syncing")
     parser.add_argument("--max-rows", type=int, default=None)
     parser.add_argument("--sleep-seconds", type=float, default=0.0)
 

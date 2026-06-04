@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Configuration
 # ============================================================
-BITCOIN_RPC_URL = "http://192.168.2.65:8332"
+BITCOIN_RPC_URL = "http://192.168.2.241:8332"
 BITCOIN_RPC_USER = "bitcoin"
 BITCOIN_RPC_PASSWORD = "passw0rd"
 
-CLICKHOUSE_HTTP_URL = "http://localhost:8123"
+CLICKHOUSE_HTTP_URL = "http://192.168.2.241:8123"
 CLICKHOUSE_DATABASE = "bitcoin"
 CLICKHOUSE_USER = "default"
 CLICKHOUSE_PASSWORD = ""
